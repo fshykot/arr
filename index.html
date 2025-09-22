@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Car Inventory</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f4f6f9; padding:20px; }
+  h2 { margin-bottom:10px; }
+  .controls { margin-bottom:20px; }
+  .controls input, .controls textarea { padding:6px; margin:4px 0; }
+  .controls button { padding:6px 12px; margin:4px 5px 4px 0; }
+  .container { display:flex; gap:20px; flex-wrap:wrap; }
+  .box { border:2px solid #444; border-radius:6px; background:#fff; padding:10px; width:220px; min-height:160px; }
+  .box h3 { margin:0 0 10px; text-align:center; }
+  .item { border:1px solid #888; border-radius:4px; padding:6px; margin:5px 0; background:#ddeeff; cursor:grab; display:flex; flex-direction:column; align-items:center; }
+  .item span { margin:4px 0; }
+  .item img { max-width:80px; max-height:80px; margin:4px 0; }
+  .delete-btn { background:red; color:#fff; border:none; padding:2px 6px; cursor:pointer; border-radius:3px; }
+  #output { margin-top:30px; background:#fff; padding:15px; border:1px solid #ccc; border-radius:6px; }
+</style>
+</head>
+<body>
+
+<h2>Car Inventory</h2>
+
+<div class="controls">
+  <input type="text" id="itemInput" placeholder="Enter item name">
+  <input type="text" id="imageInput" placeholder="Image URL (optional)">
+  <button id="addItemBtn">Add Item</button>
+  <br>
+  <textarea id="bulkInput" rows="5" cols="40" placeholder="Paste multiple items, one per line"></textarea><br>
+  <button id="bulkAddBtn">Bulk Add</button>
+  <input type="file" id="fileInput" accept=".txt,.csv">
+  <br>
+  <button id="addBoxBtn">Add New Box</button>
+  <button id="generateBtn">Generate List</button>
+</div>
+
+<div class="container" id="boxesContainer">
+  <div class="box" id="Uncategorized"><h3>Uncategorized</h3></div>
+</div>
+
+<div id="output"></div>
+
+<script>
+// ===== CONFIG =====
+const SHEET_API = "https://script.google.com/macros/s/AKfycbzb5z852vm_T6OqSpsV-E3r8Cb01nA02AqqRJVRyMPIQJLHhLORYTXnAR1FNRIAA7sR/exec";
+const SHEET_NAME = "Car"; // Tab name in Google Sheet
+
+let data = {}; // { boxName: [ {name, image, box} ] }
+
+// ===== LOAD DATA =====
+async function loadData() {
+  try {
+    const res = await fetch(`${SHEET_API}?sheet=${SHEET_NAME}`);
+    const items = await res.json();
+    data = {};
+    // organize by box
+    items.forEach(it => {
+      if(!data[it.box]) data[it.box] = [];
+      data[it.box].push({name: it.name, image: it.image, box: it.box});
+    });
+    if(!data["Uncategorized"]) data["Uncategorized"] = [];
+    render();
+  } catch(err) {
+    console.error("Load error:", err);
+  }
+}
+
+// ===== SAVE DATA =====
+async function saveData() {
+  const allItems = [];
+  for(const box in data){
+    data[box].forEach(it => {
+      allItems.push({name: it.name, image: it.image || "", box});
+    });
+  }
+  try {
+    await fetch(`${SHEET_API}?sheet=${SHEET_NAME}`, {
+      method: "POST",
+      body: JSON.stringify(allItems),
+      headers: {"Content-Type":"application/json"}
+    });
+  } catch(err) {
+    console.error("Save error:", err);
+  }
+}
+
+// ===== RENDER =====
+function render() {
+  const container = document.getElementById("boxesContainer");
+  container.innerHTML = "";
+  for (const boxId in data) {
+    const box = document.createElement("div");
+    box.className = "box";
+    box.id = boxId;
+    box.innerHTML = `<h3>${boxId}</h3>`;
+    data[boxId].forEach((item,i) => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.draggable = true;
+      let html = `<span>${item.name}</span>`;
+      if(item.image) html += `<img src="${item.image}" alt="img">`;
+      html += `<button class="delete-btn">&times;</button>`;
+      div.innerHTML = html;
+
+      div.querySelector(".delete-btn").onclick = async () => {
+        data[boxId].splice(i,1);
+        await saveData(); render();
+      };
+      box.appendChild(div);
+    });
+    container.appendChild(box);
+  }
+}
+
+// ===== DRAG & DROP =====
+let dragged = null;
+document.addEventListener("dragstart", e => {
+  if(e.target.classList.contains("item")) dragged = e.target;
+});
+document.addEventListener("dragover", e => {
+  if(e.target.classList.contains("box")) e.preventDefault();
+});
+document.addEventListener("drop", async e => {
+  if(e.target.classList.contains("box") && dragged) {
+    const fromBox = dragged.parentElement.id;
+    const toBox = e.target.id;
+    const itemName = dragged.querySelector("span").textContent;
+    const itemImage = dragged.querySelector("img")?.src || "";
+    // move
+    data[fromBox] = data[fromBox].filter(i => i.name !== itemName);
+    if(!data[toBox]) data[toBox] = [];
+    data[toBox].push({name:itemName, image:itemImage, box:toBox});
+    await saveData(); render();
+    dragged = null;
+  }
+});
+
+// ===== ADD ITEM =====
+document.getElementById("addItemBtn").onclick = async () => {
+  const name = document.getElementById("itemInput").value.trim();
+  const image = document.getElementById("imageInput").value.trim();
+  if(name) {
+    data["Uncategorized"].push({name, image, box:"Uncategorized"});
+    document.getElementById("itemInput").value = "";
+    document.getElementById("imageInput").value = "";
+    await saveData(); render();
+  }
+};
+document.getElementById("itemInput").addEventListener("keypress", e => {
+  if(e.key === "Enter") document.getElementById("addItemBtn").click();
+});
+
+// ===== BULK ADD (textarea) =====
+document.getElementById("bulkAddBtn").onclick = async () => {
+  const lines = document.getElementById("bulkInput").value.trim().split("\n");
+  lines.forEach(line => {
+    if(line.trim()) data["Uncategorized"].push({name:line.trim(), image:"", box:"Uncategorized"});
+  });
+  document.getElementById("bulkInput").value = "";
+  await saveData(); render();
+};
+
+// ===== BULK ADD (file upload) =====
+document.getElementById("fileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if(file) {
+    const reader = new FileReader();
+    reader.onload = async evt => {
+      const lines = evt.target.result.split(/\r?\n/);
+      lines.forEach(line => {
+        if(line.trim()) data["Uncategorized"].push({name:line.trim(), image:"", box:"Uncategorized"});
+      });
+      await saveData(); render();
+    };
+    reader.readAsText(file);
+  }
+});
+
+// ===== ADD BOX =====
+document.getElementById("addBoxBtn").onclick = async () => {
+  const name = prompt("Enter box name:");
+  if(name && !data[name]) {
+    data[name] = [];
+    await saveData(); render();
+  }
+};
+
+// ===== GENERATE LIST =====
+document.getElementById("generateBtn").onclick = () => {
+  let html = "<h3>Generated List</h3><ul>";
+  for(const box in data){
+    html += `<li><strong>${box}</strong><ul>`;
+    data[box].forEach(item => {
+      html += `<li>${item.name}${item.image ? " (Image: "+item.image+")" : ""}</li>`;
+    });
+    html += "</ul></li>";
+  }
+  html += "</ul>";
+  document.getElementById("output").innerHTML = html;
+};
+
+// ===== INIT =====
+loadData();
+</script>
+
+</body>
+</html>
