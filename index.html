@@ -204,6 +204,43 @@ document.getElementById("generateBtn").onclick = () => {
 
 // ===== INIT =====
 loadData();
+
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxRH6SNiK2p74T6qvwRo24LPZc75hmrdWeVxBl3cARdu0KsGIxSvp0QP-uMNZUaa-MEZA/exec"; // Replace with your deployed Apps Script URL
+
+// Function to add a new item
+function addItem(name, category, price) {
+  fetch(WEB_APP_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "add",
+      name: name,
+      category: category,
+      price: price
+    }),
+    headers: { "Content-Type": "application/json" }
+  })
+  .then(res => res.json())
+  .then(data => console.log(data))
+  .catch(err => console.error(err));
+}
+
+// Function to update an existing item
+function updateItem(row, name, category, price) {
+  fetch(WEB_APP_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "update",
+      row: row, // 1-based row number in the sheet
+      name: name,
+      category: category,
+      price: price
+    }),
+    headers: { "Content-Type": "application/json" }
+  })
+  .then(res => res.json())
+  .then(data => console.log(data))
+  .catch(err => console.error(err));
+}
 </script>
 
 </body>
