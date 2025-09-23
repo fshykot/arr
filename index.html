@@ -11,10 +11,11 @@
   .controls input, .controls textarea { padding:6px; margin:4px 0; }
   .controls button { padding:6px 12px; margin:4px 5px 4px 0; }
   .container { display:flex; gap:20px; flex-wrap:wrap; }
-  .box { border:2px solid #444; border-radius:6px; background:#fff; padding:10px; width:220px; min-height:160px; }
+  .box { border:2px solid #444; border-radius:6px; background:#fff; padding:10px; width:220px; min-height:160px; position:relative; }
   .box h3 { margin:0 0 10px; text-align:center; }
-  .item { border:1px solid #888; border-radius:4px; padding:6px; margin:5px 0; background:#ddeeff; cursor:grab; display:flex; flex-direction:column; align-items:center; }
-  .item span { margin:4px 0; }
+  .delete-box-btn { position:absolute; top:5px; right:5px; background:red; color:#fff; border:none; padding:2px 6px; cursor:pointer; border-radius:3px; font-size:12px; }
+  .item { border:1px solid #888; border-radius:3px; padding:5px; margin:3px 3px; background:#ddeeff; cursor:grab; display:flex; flex-direction:column; align-items:center; font-size:14px; display:inline-block; }
+  .item span { margin:4px 3px; }
   .item img { max-width:80px; max-height:80px; margin:4px 0; }
   .delete-btn { background:red; color:#fff; border:none; padding:2px 6px; cursor:pointer; border-radius:3px; }
   #output { margin-top:30px; background:#fff; padding:15px; border:1px solid #ccc; border-radius:6px; }
@@ -35,6 +36,7 @@
   <br>
   <button id="addBoxBtn">Add New Box</button>
   <button id="generateBtn">Generate List</button>
+  <button id="saveBtn">💾 Save to Google Sheet (manual)</button>
 </div>
 
 <div class="container" id="boxesContainer">
@@ -45,18 +47,17 @@
 
 <script>
 // ===== CONFIG =====
-const SHEET_API = "https://script.google.com/macros/s/AKfycbzb5z852vm_T6OqSpsV-E3r8Cb01nA02AqqRJVRyMPIQJLHhLORYTXnAR1FNRIAA7sR/exec";
-const SHEET_NAME = "car"; // Tab name in Google Sheet
+const SHEET_API = "https://script.google.com/macros/s/AKfycbxbI_0Oe4ZIDoM2Z9wPSxzhbQg-8j0-AHyRIszLm381rQ5xix3xu5vAq1qSAaIUlLv0/exec"; // Replace with your Apps Script /exec URL
+const SHEET_NAME = "Car"; // Tab name in Google Sheet
 
 let data = {}; // { boxName: [ {name, image, box} ] }
 
-// ===== LOAD DATA =====
+// ===== LOAD DATA FROM SHEET =====
 async function loadData() {
   try {
     const res = await fetch(`${SHEET_API}?sheet=${SHEET_NAME}`);
     const items = await res.json();
     data = {};
-    // organize by box
     items.forEach(it => {
       if(!data[it.box]) data[it.box] = [];
       data[it.box].push({name: it.name, image: it.image, box: it.box});
@@ -68,7 +69,7 @@ async function loadData() {
   }
 }
 
-// ===== SAVE DATA =====
+// ===== SAVE DATA TO SHEET =====
 async function saveData() {
   const allItems = [];
   for(const box in data){
@@ -76,18 +77,21 @@ async function saveData() {
       allItems.push({name: it.name, image: it.image || "", box});
     });
   }
+  console.log("Saving data:", allItems);
   try {
-    await fetch(`${SHEET_API}?sheet=${SHEET_NAME}`, {
+    const res = await fetch(`${SHEET_API}?sheet=${SHEET_NAME}`, {
       method: "POST",
       body: JSON.stringify(allItems),
       headers: {"Content-Type":"application/json"}
     });
+    const text = await res.text();
+    console.log("Google Sheet Response:", text);
   } catch(err) {
     console.error("Save error:", err);
   }
 }
 
-// ===== RENDER =====
+// ===== RENDER UI =====
 function render() {
   const container = document.getElementById("boxesContainer");
   container.innerHTML = "";
@@ -95,7 +99,14 @@ function render() {
     const box = document.createElement("div");
     box.className = "box";
     box.id = boxId;
-    box.innerHTML = `<h3>${boxId}</h3>`;
+
+    // Header with delete box option (except Uncategorized)
+    let headerHtml = `<h3>${boxId}</h3>`;
+    if (boxId !== "Uncategorized") {
+      headerHtml += `<button class="delete-box-btn" onclick="deleteBox('${boxId}')">❌</button>`;
+    }
+    box.innerHTML = headerHtml;
+
     data[boxId].forEach((item,i) => {
       const div = document.createElement("div");
       div.className = "item";
@@ -105,13 +116,23 @@ function render() {
       html += `<button class="delete-btn">&times;</button>`;
       div.innerHTML = html;
 
-      div.querySelector(".delete-btn").onclick = async () => {
+      div.querySelector(".delete-btn").onclick = () => {
         data[boxId].splice(i,1);
-        await saveData(); render();
+        render();
+        saveData(); // auto-save
       };
       box.appendChild(div);
     });
     container.appendChild(box);
+  }
+}
+
+// ===== DELETE BOX =====
+function deleteBox(boxId) {
+  if (confirm(`Delete box "${boxId}" and all its items?`)) {
+    delete data[boxId];
+    render();
+    saveData();
   }
 }
 
@@ -123,30 +144,31 @@ document.addEventListener("dragstart", e => {
 document.addEventListener("dragover", e => {
   if(e.target.classList.contains("box")) e.preventDefault();
 });
-document.addEventListener("drop", async e => {
+document.addEventListener("drop", e => {
   if(e.target.classList.contains("box") && dragged) {
     const fromBox = dragged.parentElement.id;
     const toBox = e.target.id;
     const itemName = dragged.querySelector("span").textContent;
     const itemImage = dragged.querySelector("img")?.src || "";
-    // move
     data[fromBox] = data[fromBox].filter(i => i.name !== itemName);
     if(!data[toBox]) data[toBox] = [];
     data[toBox].push({name:itemName, image:itemImage, box:toBox});
-    await saveData(); render();
+    render();
+    saveData(); // auto-save
     dragged = null;
   }
 });
 
 // ===== ADD ITEM =====
-document.getElementById("addItemBtn").onclick = async () => {
+document.getElementById("addItemBtn").onclick = () => {
   const name = document.getElementById("itemInput").value.trim();
   const image = document.getElementById("imageInput").value.trim();
   if(name) {
     data["Uncategorized"].push({name, image, box:"Uncategorized"});
     document.getElementById("itemInput").value = "";
     document.getElementById("imageInput").value = "";
-    await saveData(); render();
+    render();
+    saveData(); // auto-save
   }
 };
 document.getElementById("itemInput").addEventListener("keypress", e => {
@@ -154,13 +176,14 @@ document.getElementById("itemInput").addEventListener("keypress", e => {
 });
 
 // ===== BULK ADD (textarea) =====
-document.getElementById("bulkAddBtn").onclick = async () => {
+document.getElementById("bulkAddBtn").onclick = () => {
   const lines = document.getElementById("bulkInput").value.trim().split("\n");
   lines.forEach(line => {
     if(line.trim()) data["Uncategorized"].push({name:line.trim(), image:"", box:"Uncategorized"});
   });
   document.getElementById("bulkInput").value = "";
-  await saveData(); render();
+  render();
+  saveData(); // auto-save
 };
 
 // ===== BULK ADD (file upload) =====
@@ -168,23 +191,25 @@ document.getElementById("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
   if(file) {
     const reader = new FileReader();
-    reader.onload = async evt => {
+    reader.onload = evt => {
       const lines = evt.target.result.split(/\r?\n/);
       lines.forEach(line => {
         if(line.trim()) data["Uncategorized"].push({name:line.trim(), image:"", box:"Uncategorized"});
       });
-      await saveData(); render();
+      render();
+      saveData(); // auto-save
     };
     reader.readAsText(file);
   }
 });
 
 // ===== ADD BOX =====
-document.getElementById("addBoxBtn").onclick = async () => {
+document.getElementById("addBoxBtn").onclick = () => {
   const name = prompt("Enter box name:");
   if(name && !data[name]) {
     data[name] = [];
-    await saveData(); render();
+    render();
+    saveData(); // auto-save
   }
 };
 
@@ -202,45 +227,11 @@ document.getElementById("generateBtn").onclick = () => {
   document.getElementById("output").innerHTML = html;
 };
 
+// ===== SAVE BUTTON (manual) =====
+document.getElementById("saveBtn").onclick = saveData;
+
 // ===== INIT =====
 loadData();
-
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxRH6SNiK2p74T6qvwRo24LPZc75hmrdWeVxBl3cARdu0KsGIxSvp0QP-uMNZUaa-MEZA/exec"; // Replace with your deployed Apps Script URL
-
-// Function to add a new item
-function addItem(name, category, price) {
-  fetch(WEB_APP_URL, {
-    method: "POST",
-    body: JSON.stringify({
-      action: "add",
-      name: name,
-      category: category,
-      price: price
-    }),
-    headers: { "Content-Type": "application/json" }
-  })
-  .then(res => res.json())
-  .then(data => console.log(data))
-  .catch(err => console.error(err));
-}
-
-// Function to update an existing item
-function updateItem(row, name, category, price) {
-  fetch(WEB_APP_URL, {
-    method: "POST",
-    body: JSON.stringify({
-      action: "update",
-      row: row, // 1-based row number in the sheet
-      name: name,
-      category: category,
-      price: price
-    }),
-    headers: { "Content-Type": "application/json" }
-  })
-  .then(res => res.json())
-  .then(data => console.log(data))
-  .catch(err => console.error(err));
-}
 </script>
 
 </body>
